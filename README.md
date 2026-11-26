@@ -8,6 +8,10 @@ Pentimento runs on macOS 14 or later and uses a bundled copy of [ExifTool](https
   <img src="docs/screenshot.png" alt="Pentimento showing a photo's location, device, identifier, people, date and caption metadata, with 32 privacy-sensitive tags found" width="800">
 </p>
 
+## The name
+
+*Pentimento* (/ˌpen(t)əˈmen(t)ō/, from the Italian *pentirsi*, "to repent" or "to change one's mind") is a painting term for earlier marks that an artist painted over, which later show through as the upper layers age or under X-ray and infrared imaging. Photos carry their own hidden layers beneath the visible image—locations, dates, device details, and other metadata—and Pentimento lets you surface and remove them.
+
 ## Install
 
 With Homebrew:

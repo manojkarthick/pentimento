@@ -3,6 +3,7 @@ name: Release
 # Manual release from the tip of main. Picks the next version, writes the changelog with git-cliff
 # (cliff.toml) and commits it to main, tags and creates the GitHub Release, builds and attaches the
 # DMG, and, for stable releases, bumps the Homebrew cask. The first release is v0.1.0.
+# Run from a terminal: gh workflow run release.yml -f channel=stable -f bump=patch
 on:
   workflow_dispatch:
     inputs:

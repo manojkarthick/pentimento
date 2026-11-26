@@ -2,6 +2,7 @@ name: Build DMG
 
 # Builds the DMG for an existing tag, attaches it to that tag's GitHub Release, and verifies the
 # published release. Called by release.yml.
+# To build the same DMG locally: make release VERSION=<version>
 on:
   workflow_call:
     inputs:

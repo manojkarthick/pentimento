@@ -1,0 +1,51 @@
+# git-cliff config for release notes and CHANGELOG.md, used by .github/workflows/release.yml.
+# Run locally: GITHUB_TOKEN=$(gh auth token) git cliff <prev_tag>..HEAD --tag v<version>
+
+[remote.github]
+owner = "manojkarthick"
+repo = "pentimento"
+
+[changelog]
+body = """
+## {{ version }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits -%}
+- {{ commit.message | split(pat="\n") | first | trim | upper_first }}\
+  {% if commit.remote.username %} by @{{ commit.remote.username }}{% else %} by {{ commit.author.name }}{% endif %}
+{% endfor %}{% endfor %}
+---
+
+### Changelog
+{% if previous.version -%}
+**Full Changelog**: [{{ previous.version }}...{{ version }}](https://github.com/manojkarthick/pentimento/compare/{{ previous.version }}...{{ version }})
+{% endif %}
+{% for commit in commits -%}
+- [{{ commit.id | truncate(length=7, end="") }}](https://github.com/manojkarthick/pentimento/commit/{{ commit.id }}) {{ commit.raw_message | split(pat="\n") | first | trim }}\
+  {% if commit.remote.username %} by @{{ commit.remote.username }}{% else %} by {{ commit.author.name }}{% endif %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+.*"
+sort_commits = "oldest"
+commit_preprocessors = [
+  # Squash merges append "(#123)" to the title; turn it into a PR link.
+  { pattern = '(?m)\s*\(#([0-9]+)\)$', replace = " ([#${1}](https://github.com/manojkarthick/pentimento/pull/${1}))" },
+]
+# The HTML comments order the sections; striptags removes them from the headings.
+commit_parsers = [
+  { message = "^docs: changelog for", skip = true },
+  { message = "^Merge ", skip = true },
+  { message = "^(feat|feature)", group = "<!-- 0 -->New Features" },
+  { message = "^[Aa]dd", group = "<!-- 0 -->New Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
+  { message = "^[Ff]ix", group = "<!-- 1 -->Bug Fixes" },
+  { message = "^(refactor|enhance)", group = "<!-- 2 -->Refactor" },
+  { message = "^(chore|style|docs|perf|test|ci|build)", group = "<!-- 3 -->Chores" },
+  { message = ".*", group = "<!-- 1 -->Bug Fixes" },
+]

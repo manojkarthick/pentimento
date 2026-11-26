@@ -1,0 +1,161 @@
+name: Release
+
+# Manual release from the tip of main. Picks the next version, writes the changelog with git-cliff
+# (cliff.toml) and commits it to main, tags and creates the GitHub Release, builds and attaches the
+# DMG, and, for stable releases, bumps the Homebrew cask. The first release is v0.1.0.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "stable: the next version. beta: the next version's -beta.N pre-release."
+        required: true
+        default: stable
+        type: choice
+        options: [stable, beta]
+      bump:
+        description: "Which part of the last stable version to bump."
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Pick the version
+        id: meta
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          LAST_STABLE="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+          if [ -z "$LAST_STABLE" ]; then
+            NEXT="0.1.0"
+          else
+            IFS=. read -r MAJOR MINOR PATCH <<< "${LAST_STABLE#v}"
+            case "$BUMP" in
+              major) NEXT="$((MAJOR + 1)).0.0" ;;
+              minor) NEXT="$MAJOR.$((MINOR + 1)).0" ;;
+              patch) NEXT="$MAJOR.$MINOR.$((PATCH + 1))" ;;
+            esac
+          fi
+          LAST_BETA="$(git tag -l "v$NEXT-beta.*" | sort -V | tail -1)"
+          if [ "$CHANNEL" = beta ]; then
+            VERSION="$NEXT-beta.$(( ${LAST_BETA##*.} + 1 ))"
+            # Betas span from the previous beta in this lane, or the last stable for the first one.
+            PREV="${LAST_BETA:-$LAST_STABLE}"
+            PRERELEASE=true
+          else
+            VERSION="$NEXT"
+            # Stables span from the last stable, rolling up the whole beta series.
+            PREV="$LAST_STABLE"
+            PRERELEASE=false
+          fi
+          {
+            echo "tag=v$VERSION"
+            echo "version=$VERSION"
+            # git-cliff takes the whole history for the very first release.
+            echo "range=${PREV:+$PREV..HEAD}"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$PREV" ] && [ "$(git rev-list --count "$PREV..HEAD")" -eq 0 ]; then
+            echo "::error::No commits on main since $PREV"
+            exit 1
+          fi
+          echo "Releasing v$VERSION (changes since ${PREV:-the first commit})" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate the changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          # Stable notes ignore beta tags so they cover everything since the last stable.
+          args: >-
+            ${{ steps.meta.outputs.range }} --tag ${{ steps.meta.outputs.tag }}
+            ${{ inputs.channel == 'stable' && '--ignore-tags beta' || '' }}
+        env:
+          OUTPUT: notes.md
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Commit the changelog, tag, and create the release
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+        run: |
+          # Insert the new section right after the "# Changelog" header.
+          { echo "# Changelog"; echo; cat notes.md; echo; tail -n +2 CHANGELOG.md | sed '/./,$!d'; } > CHANGELOG.new
+          mv CHANGELOG.new CHANGELOG.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "docs: changelog for $TAG"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin HEAD:main "$TAG"
+          FLAGS=(--latest)
+          [ "$PRERELEASE" = true ] && FLAGS=(--prerelease --latest=false)
+          gh release create "$TAG" --verify-tag --title "Pentimento $VERSION" --notes-file notes.md "${FLAGS[@]}"
+
+  build:
+    needs: prepare
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-dmg.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      version: ${{ needs.prepare.outputs.version }}
+      prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+
+  homebrew:
+    needs: [prepare, build]
+    # Only stables reach the tap; betas stop at the GitHub pre-release.
+    if: inputs.channel == 'stable'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CASK: Casks/pentimento.rb
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: manojkarthick/homebrew-tap
+          # Fine-grained PAT with Contents read/write on manojkarthick/homebrew-tap only.
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Bump the cask
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          SHA256="$(gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "Pentimento-$VERSION.dmg" -O - | sha256sum | cut -d' ' -f1)"
+          sed -i -E \
+            -e "s/^  version \"[^\"]+\"/  version \"$VERSION\"/" \
+            -e "s/^  sha256 \"[^\"]+\"/  sha256 \"$SHA256\"/" \
+            "$CASK"
+          grep -q "version \"$VERSION\"" "$CASK"
+          grep -q "sha256 \"$SHA256\"" "$CASK"
+
+      - name: Push to the tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "pentimento $VERSION"
+          git push

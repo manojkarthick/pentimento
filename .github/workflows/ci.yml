@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Build and Test
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The runner image doesn't ship XcodeGen; the Xcode project is generated from project.yml.
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build and test
+        run: make test

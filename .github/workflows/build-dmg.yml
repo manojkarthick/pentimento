@@ -1,0 +1,65 @@
+name: Build DMG
+
+# Builds the DMG for an existing tag, attaches it to that tag's GitHub Release, and verifies the
+# published release. Called by release.yml.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          # release.sh uses the commit count as CFBundleVersion.
+          fetch-depth: 0
+
+      # The runner image doesn't ship XcodeGen; the Xcode project is generated from project.yml.
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run tests
+        run: make test
+
+      - name: Build DMG
+        env:
+          PENTIMENTO_VERSION: ${{ inputs.version }}
+        run: ./script/release.sh
+
+      - name: Upload DMG to the release
+        run: gh release upload "$TAG" "dist/Pentimento-$VERSION.dmg" --clobber
+
+      - name: Verify the published release
+        env:
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          gh release view "$TAG" --json isDraft,isPrerelease,assets,body --jq '
+            if .isDraft then "release is a draft"
+            elif (.isPrerelease | tostring) != env.PRERELEASE then "isPrerelease is \(.isPrerelease), expected \(env.PRERELEASE)"
+            elif ([.assets[].name] | index("Pentimento-\(env.VERSION).dmg")) == null then "DMG asset missing"
+            elif (.body | length) == 0 then "release notes are empty"
+            else empty end' > problems.txt
+          if [ -s problems.txt ]; then
+            echo "::error::$TAG failed verification: $(cat problems.txt)"
+            exit 1
+          fi

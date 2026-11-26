@@ -4,6 +4,10 @@ Pentimento is a native macOS app for inspecting and removing metadata from photo
 
 Pentimento runs on macOS 14 or later and uses a bundled copy of [ExifTool](https://exiftool.org).
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Pentimento showing a photo's location, device, identifier, people, date and caption metadata, with 32 privacy-sensitive tags found" width="800">
+</p>
+
 ## Install
 
 With Homebrew:
